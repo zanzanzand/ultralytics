@@ -2552,7 +2552,7 @@ class CBAM(nn.Module):
         return x
 
 class CBAMBackbone(nn.Module):
-    def __init__(self, in_channels: int = 3, out_channels=(256, 512, 1024)):
+    def __init__(self, c1: int, c2: int = 1024, out_channels=(256, 512, 1024)):
         super().__init__()
 
         self.stem = nn.Sequential(
