@@ -2495,3 +2495,19 @@ class RealNVP(nn.Module):
             self.float()
         z, log_det = self.backward_p(x)
         return self.prior.log_prob(z) + log_det
+
+class CBAMDoubleConv(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, reduction: int = 16) -> None:
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+        )
+        self.cbam = CBAM(out_channels, reduction)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.cbam(self.conv(x))
