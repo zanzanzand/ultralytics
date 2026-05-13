@@ -2511,3 +2511,90 @@ class CBAMDoubleConv(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.cbam(self.conv(x))
+    
+class ChannelAttention(nn.Module):
+    def __init__(self, channels: int, reduction: int = 16) -> None:
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(channels, channels // reduction, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(channels // reduction, channels, bias=False),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        avg = self.mlp(x.mean(dim=[2, 3]))
+        mx  = self.mlp(x.amax(dim=[2, 3]))
+        scale = torch.sigmoid(avg + mx).unsqueeze(-1).unsqueeze(-1)
+        return x * scale
+
+
+class SpatialAttention(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.conv = nn.Conv2d(2, 1, kernel_size=7, padding=3, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        avg = x.mean(dim=1, keepdim=True)
+        mx  = x.amax(dim=1, keepdim=True)
+        scale = torch.sigmoid(self.conv(torch.cat([avg, mx], dim=1)))
+        return x * scale
+
+
+class CBAM(nn.Module):
+    def __init__(self, channels: int, reduction: int = 16) -> None:
+        super().__init__()
+        self.channel = ChannelAttention(channels, reduction)
+        self.spatial = SpatialAttention()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.channel(x)
+        x = self.spatial(x)
+        return x
+
+class CBAMBackbone(nn.Module):
+    def __init__(self, in_channels: int = 3, out_channels=(256, 512, 1024)):
+        super().__init__()
+
+        self.stem = nn.Sequential(
+            nn.Conv2d(in_channels, 64, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+        )
+
+        self.stage1 = CBAMDoubleConv(64, 128)
+
+        self.stage2 = nn.Sequential(
+            nn.Conv2d(128, 128, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            CBAMDoubleConv(128, 256),
+        )
+
+        self.stage3 = nn.Sequential(
+            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            CBAMDoubleConv(256, 512),
+        )
+
+        self.stage4 = nn.Sequential(
+            nn.Conv2d(512, 512, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(512),
+            nn.ReLU(inplace=True),
+            CBAMDoubleConv(512, 1024),
+        )
+
+        self.p3_proj = nn.Conv2d(256, out_channels[0], kernel_size=1)
+        self.p4_proj = nn.Conv2d(512, out_channels[1], kernel_size=1)
+        self.p5_proj = nn.Conv2d(1024, out_channels[2], kernel_size=1)
+
+    def forward(self, x: torch.Tensor):
+        x = self.stem(x)
+
+        x = self.stage1(x)
+
+        p3 = self.stage2(x)
+        p4 = self.stage3(p3)
+        p5 = self.stage4(p4)
+
+        return [self.p3_proj(p3), self.p4_proj(p4), self.p5_proj(p5)]
